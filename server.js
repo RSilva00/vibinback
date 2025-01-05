@@ -167,6 +167,39 @@ app.get("/api/search-artists", async (req, res) => {
     }
 });
 
+const DEEZER_API_URL = "https://api.deezer.com";
+
+// Endpoint para buscar artistas
+app.get("/api/search-artists", async (req, res) => {
+    const { query } = req.query;
+    try {
+        const response = await fetch(
+            `${DEEZER_API_URL}/search/artist?q=${query}`
+        );
+        const data = await response.json();
+        res.json(data.data); // Enviar los artistas encontrados
+    } catch (err) {
+        res.status(500).json({ error: "Error al buscar artistas" });
+    }
+});
+
+// Endpoint para obtener las 10 canciones principales de un artista
+app.get("/api/artist-top-tracks/:artistId", async (req, res) => {
+    const { artistId } = req.params;
+    try {
+        const response = await fetch(
+            `${DEEZER_API_URL}/artist/${artistId}/top?limit=10`
+        );
+        const data = await response.json();
+        console.log(data);
+        res.json(data.data); // Enviar las canciones principales del artista
+    } catch (err) {
+        res.status(500).json({
+            error: "Error al obtener las canciones principales"
+        });
+    }
+});
+
 app.listen(PORT, () => {
     console.log(`Servidor ejecutándose en http://localhost:${PORT}`);
 });
