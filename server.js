@@ -51,10 +51,7 @@ const UserSchema = new mongoose.Schema({
     password: { type: String, required: true }, // Contraseña (debería estar cifrada)
     favoriteSongs: [
         {
-            id: { type: String, required: true }, // ID de la canción
-            title: { type: String }, // Título de la canción
-            artist: { type: String }, // Artista de la canción
-            album: { type: String } // Álbum de la canción
+            type: String
         }
     ],
     friends: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }], // Referencias a otros usuarios
@@ -114,11 +111,11 @@ const verifyToken = (req, res, next) => {
     }
 
     try {
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        req.user = decoded; // Información del usuario decodificada
+        const decoded = jwt.verify(token.split(" ")[1], process.env.JWT_SECRET); // Asegúrate de separar 'Bearer' y el token
+        req.user = decoded; // Guardar la información del usuario decodificada
         next();
     } catch (err) {
-        res.status(401).json({ error: "Token no válido" });
+        return res.status(401).json({ error: "Token no válido" });
     }
 };
 // Obtener información del usuario autenticado
@@ -164,20 +161,44 @@ app.get("/api/user", verifyToken, (req, res) => {
 });
 
 // Gestionar canciones favoritas
-app.post("/api/favorites", verifyToken, (req, res) => {
-    const { song } = req.body;
-    const user = users.find((u) => u.id === req.user.id);
-    if (!user) {
-        return res.status(404).json({ error: "Usuario no encontrado" });
+app.post("/api/favorites", verifyToken, async (req, res) => {
+    console.log("Me han llamado");
+    const { songId } = req.body; // Ahora se espera solo el ID de la canción
+
+    if (!songId) {
+        return res.status(400).json({ error: "ID de canción no especificado" });
     }
-    if (!song) {
-        return res.status(400).json({ error: "Canción no especificada" });
+
+    try {
+        // Buscar el usuario autenticado en la base de datos
+        const user = await User.findById(req.user.id); // Usamos el ID del usuario del token
+
+        if (!user) {
+            return res.status(404).json({ error: "Usuario no encontrado" });
+        }
+
+        // Verificar si el usuario ya tiene la canción en sus favoritos
+        if (user.favoriteSongs.includes(songId)) {
+            return res
+                .status(400)
+                .json({ error: "La canción ya está en favoritos" });
+        }
+
+        // Añadir la canción a los favoritos del usuario (solo el ID)
+        user.favoriteSongs.push(songId);
+        await user.save();
+
+        // Responder con un mensaje de éxito
+        res.json({
+            message: "Canción añadida a favoritos",
+            favorites: user.favoriteSongs
+        });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({
+            error: "Error al añadir la canción a favoritos"
+        });
     }
-    user.favorites.push(song);
-    res.json({
-        message: "Canción añadida a favoritos",
-        favorites: user.favorites
-    });
 });
 
 app.delete("/api/favorites", verifyToken, (req, res) => {
