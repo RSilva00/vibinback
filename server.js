@@ -51,7 +51,7 @@ const UserSchema = new mongoose.Schema({
     password: { type: String, required: true }, // Contraseña (debería estar cifrada)
     favoriteSongs: [
         {
-            type: String
+            type: Number
         }
     ],
     friends: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }], // Referencias a otros usuarios
@@ -105,19 +105,27 @@ app.post("/register", async (req, res) => {
 });
 
 const verifyToken = (req, res, next) => {
-    const token = req.headers["authorization"];
-    if (!token) {
+    const authHeader = req.headers["authorization"];
+    console.log("Encabezado Authorization:", authHeader);
+
+    if (!authHeader) {
         return res.status(403).json({ error: "Token no proporcionado" });
     }
 
+    const token = authHeader.split(" ")[1];
+    console.log("Token extraído:", token);
+
     try {
-        const decoded = jwt.verify(token.split(" ")[1], process.env.JWT_SECRET); // Asegúrate de separar 'Bearer' y el token
-        req.user = decoded; // Guardar la información del usuario decodificada
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        console.log("Token decodificado:", decoded);
+        req.user = decoded;
         next();
     } catch (err) {
+        console.error("Error al verificar token:", err);
         return res.status(401).json({ error: "Token no válido" });
     }
 };
+
 // Obtener información del usuario autenticado
 app.get("/user", verifyToken, async (req, res) => {
     try {
@@ -160,58 +168,107 @@ app.get("/api/user", verifyToken, (req, res) => {
     res.json(user);
 });
 
-// Gestionar canciones favoritas
+app.get("/api/getFavorites", verifyToken, async (req, res) => {
+    try {
+        const user = await User.findById(req.user.id); // Recuperamos el usuario por su id (extraído del token)
+
+        if (!user) {
+            return res.status(404).json({ error: "Usuario no encontrado" });
+        }
+
+        res.json({ favorites: user.favoriteSongs }); // Retornamos las canciones favoritas del usuario
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Error al obtener los favoritos" });
+    }
+});
+
+// Añadir una canción a los favoritos
 app.post("/api/favorites", verifyToken, async (req, res) => {
-    console.log("Me han llamado");
-    const { songId } = req.body; // Ahora se espera solo el ID de la canción
+    const { songId } = req.body;
+
+    console.log("Cuerpo de la solicitud recibido:", req.body);
 
     if (!songId) {
         return res.status(400).json({ error: "ID de canción no especificado" });
     }
 
     try {
-        // Buscar el usuario autenticado en la base de datos
-        const user = await User.findById(req.user.id); // Usamos el ID del usuario del token
-
+        // Buscar al usuario autenticado
+        const user = await User.findById(req.user.id);
         if (!user) {
             return res.status(404).json({ error: "Usuario no encontrado" });
         }
 
-        // Verificar si el usuario ya tiene la canción en sus favoritos
-        if (user.favoriteSongs.includes(songId)) {
+        // Normalizar el ID de la canción a número para garantizar consistencia
+        const songIdNormalized = parseInt(songId, 10);
+
+        // Verificar si la canción ya está en favoritos
+        if (user.favoriteSongs.includes(songIdNormalized)) {
             return res
                 .status(400)
                 .json({ error: "La canción ya está en favoritos" });
         }
 
-        // Añadir la canción a los favoritos del usuario (solo el ID)
-        user.favoriteSongs.push(songId);
+        // Agregar la canción a favoritos
+        user.favoriteSongs.push(songIdNormalized);
         await user.save();
 
-        // Responder con un mensaje de éxito
         res.json({
             message: "Canción añadida a favoritos",
             favorites: user.favoriteSongs
         });
     } catch (err) {
-        console.error(err);
+        console.error("Error al añadir canción a favoritos:", err);
         res.status(500).json({
             error: "Error al añadir la canción a favoritos"
         });
     }
 });
 
-app.delete("/api/favorites", verifyToken, (req, res) => {
-    const { song } = req.body;
-    const user = users.find((u) => u.id === req.user.id);
-    if (!user) {
-        return res.status(404).json({ error: "Usuario no encontrado" });
+// Eliminar una canción de los favoritos
+app.delete("/api/favorites/:songId", verifyToken, async (req, res) => {
+    const { songId } = req.params; // Recibimos el ID de la canción desde la URL
+
+    console.log("ID de la canción a eliminar recibido:", songId);
+
+    if (!songId) {
+        return res.status(400).json({ error: "ID de canción no especificado" });
     }
-    user.favorites = user.favorites.filter((s) => s !== song);
-    res.json({
-        message: "Canción eliminada de favoritos",
-        favorites: user.favorites
-    });
+
+    try {
+        // Buscar al usuario autenticado
+        const user = await User.findById(req.user.id);
+        if (!user) {
+            return res.status(404).json({ error: "Usuario no encontrado" });
+        }
+
+        // Normalizar el ID de la canción a número para garantizar consistencia
+        const songIdNormalized = parseInt(songId, 10);
+
+        // Verificar si la canción está en favoritos
+        if (!user.favoriteSongs.includes(songIdNormalized)) {
+            return res
+                .status(400)
+                .json({ error: "La canción no está en favoritos" });
+        }
+
+        // Eliminar la canción de los favoritos
+        user.favoriteSongs = user.favoriteSongs.filter(
+            (song) => song !== songIdNormalized
+        );
+        await user.save();
+
+        res.json({
+            message: "Canción eliminada de favoritos",
+            favorites: user.favoriteSongs
+        });
+    } catch (err) {
+        console.error("Error al eliminar canción de favoritos:", err);
+        res.status(500).json({
+            error: "Error al eliminar la canción de favoritos"
+        });
+    }
 });
 
 // Gestionar lista de amigos
