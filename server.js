@@ -422,6 +422,95 @@ const fetchArtistData = async (query) => {
     return response.json();
 };
 
+// Endpoint para búsqueda general
+app.get("/api/search", async (req, res) => {
+    const { query } = req.query;
+
+    if (!query) {
+        return res
+            .status(400)
+            .json({ error: 'El parámetro "query" es requerido.' });
+    }
+
+    try {
+        console.log("Búsqueda en Deezer para:", query);
+
+        // Realizar las tres solicitudes simultáneamente
+        const [artistResponse, albumResponse, trackResponse] =
+            await Promise.all([
+                fetch(
+                    `https://api.deezer.com/search/artist?q=${encodeURIComponent(
+                        query
+                    )}&limit=5`
+                ),
+                fetch(
+                    `https://api.deezer.com/search/album?q=${encodeURIComponent(
+                        query
+                    )}&limit=5`
+                ),
+                fetch(
+                    `https://api.deezer.com/search/track?q=${encodeURIComponent(
+                        query
+                    )}&limit=5`
+                )
+            ]);
+
+        // Verificar que todas las respuestas sean exitosas
+        if (
+            ![artistResponse, albumResponse, trackResponse].every(
+                (res) => res.ok
+            )
+        ) {
+            throw new Error("Error en una de las solicitudes a Deezer");
+        }
+
+        // Parsear las respuestas JSON
+        const artistsData = await artistResponse.json();
+        const albumsData = await albumResponse.json();
+        const tracksData = await trackResponse.json();
+
+        // Transformar los datos
+        const artists = artistsData.data.map((item) => ({
+            id: item.id,
+            name: item.name,
+            picture: item.picture_medium,
+            type: "artist"
+        }));
+
+        const albums = albumsData.data.map((item) => ({
+            id: item.id,
+            title: item.title,
+            cover: item.cover_medium,
+            artist: item.artist.name,
+            type: "album"
+        }));
+
+        const tracks = tracksData.data.map((item) => ({
+            id: item.id,
+            title: item.title,
+            artist: item.artist.name,
+            album: item.album.title,
+            cover: item.album.cover_medium,
+            preview: item.preview,
+            type: "track"
+        }));
+
+        // Combinar los resultados
+        const results = [...artists, ...albums, ...tracks];
+
+        // Responder con los resultados al frontend
+        res.json({ results });
+    } catch (error) {
+        console.error(
+            "Error al realizar la búsqueda en Deezer:",
+            error.message
+        );
+        res.status(500).json({
+            error: "Hubo un problema al realizar la búsqueda."
+        });
+    }
+});
+
 // Ruta para buscar artistas
 app.get("/api/search-artists", async (req, res) => {
     const { query } = req.query;
@@ -446,20 +535,6 @@ app.get("/api/search-artists", async (req, res) => {
 });
 
 const DEEZER_API_URL = "https://api.deezer.com";
-
-// Endpoint para buscar artistas
-app.get("/api/search-artists", async (req, res) => {
-    const { query } = req.query;
-    try {
-        const response = await fetch(
-            `${DEEZER_API_URL}/search/artist?q=${query}`
-        );
-        const data = await response.json();
-        res.json(data.data); // Enviar los artistas encontrados
-    } catch (err) {
-        res.status(500).json({ error: "Error al buscar artistas" });
-    }
-});
 
 // Endpoint para obtener las 10 canciones principales de un artista
 app.get("/api/artist-top-tracks/:artistId", async (req, res) => {
