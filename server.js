@@ -43,19 +43,103 @@ const ChatSchema = new mongoose.Schema({
     }, // Amigo con el que se está chateando
     messages: [MessageSchema] // Historial de mensajes
 });
-
-// Modelo de Usuario
 const UserSchema = new mongoose.Schema({
-    username: { type: String, required: true, unique: true }, // Nombre de usuario
-    email: { type: String, required: true, unique: true }, // Correo electrónico
-    password: { type: String, required: true }, // Contraseña (debería estar cifrada)
-    favoriteSongs: [
+    username: { type: String, required: true, unique: true },
+    email: { type: String, required: true, unique: true },
+    password: { type: String, required: true },
+    favoriteSongs: [{ type: Number }],
+    recentlyPlayed: [
         {
-            type: Number
+            trackId: { type: Number, required: true }
         }
-    ],
-    friends: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }], // Referencias a otros usuarios
-    chats: [ChatSchema] // Chats con cada amigo
+    ]
+});
+
+const verifyToken = (req, res, next) => {
+    const authHeader = req.headers["authorization"];
+    console.log("Encabezado Authorization:", authHeader);
+
+    if (!authHeader) {
+        return res.status(403).json({ error: "Token no proporcionado" });
+    }
+
+    const token = authHeader.split(" ")[1];
+    console.log("Token extraído:", token);
+
+    try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        console.log("Token decodificado:", decoded);
+        req.user = decoded;
+        next();
+    } catch (err) {
+        console.error("Error al verificar token:", err);
+        return res.status(401).json({ error: "Token no válido" });
+    }
+};
+
+// Añadir una canción al historial de reproducidas recientemente
+app.post("/api/recently-played", verifyToken, async (req, res) => {
+    const { songId } = req.body;
+
+    console.log("Cuerpo de la solicitud recibido:", req.body);
+
+    // Validar datos de entrada
+    if (!songId) {
+        return res.status(400).json({ error: "Faltan datos obligatorios" });
+    }
+
+    try {
+        // Buscar al usuario autenticado
+        const user = await User.findById(req.user.id);
+        if (!user) {
+            return res.status(404).json({ error: "Usuario no encontrado" });
+        }
+
+        // Crear un nuevo objeto para la canción
+        const newTrack = {
+            trackId: parseInt(songId, 10)
+        };
+
+        // Agregar la canción al principio del historial
+        user.recentlyPlayed.unshift(newTrack);
+
+        // Limitar el historial a 10 canciones
+        if (user.recentlyPlayed.length > 10) {
+            user.recentlyPlayed = user.recentlyPlayed.slice(0, 10);
+        }
+
+        // Guardar los cambios en la base de datos
+        await user.save();
+
+        res.json({
+            message: "Canción añadida al historial",
+            recentlyPlayed: user.recentlyPlayed
+        });
+    } catch (err) {
+        console.error("Error al añadir canción al historial:", err);
+        res.status(500).json({
+            error: "Error al añadir la canción al historial"
+        });
+    }
+});
+
+// Obtener el historial de canciones reproducidas recientemente
+app.get("/api/recently-played", verifyToken, async (req, res) => {
+    try {
+        // Buscar al usuario autenticado
+        const user = await User.findById(req.user.id).select("recentlyPlayed");
+
+        if (!user) {
+            return res.status(404).json({ error: "Usuario no encontrado" });
+        }
+
+        res.json(user.recentlyPlayed);
+    } catch (err) {
+        console.error("Error al obtener el historial de canciones:", err);
+        res.status(500).json({
+            error: "Error al obtener el historial de canciones"
+        });
+    }
 });
 
 // Elimina cualquier middleware innecesario
@@ -103,28 +187,6 @@ app.post("/register", async (req, res) => {
         console.log(user);
     }
 });
-
-const verifyToken = (req, res, next) => {
-    const authHeader = req.headers["authorization"];
-    console.log("Encabezado Authorization:", authHeader);
-
-    if (!authHeader) {
-        return res.status(403).json({ error: "Token no proporcionado" });
-    }
-
-    const token = authHeader.split(" ")[1];
-    console.log("Token extraído:", token);
-
-    try {
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        console.log("Token decodificado:", decoded);
-        req.user = decoded;
-        next();
-    } catch (err) {
-        console.error("Error al verificar token:", err);
-        return res.status(401).json({ error: "Token no válido" });
-    }
-};
 
 // Obtener información del usuario autenticado
 app.get("/user", verifyToken, async (req, res) => {
@@ -353,9 +415,6 @@ app.post("/login", async (req, res) => {
 
     // Validar la contraseña
     const isPasswordValid = await bcrypt.compare(password, user.password);
-    console.log("Contraseña proporcionada:", password);
-    console.log("Contraseña almacenada (hash):", user.password);
-    console.log("¿Contraseña válida?", isPasswordValid);
     if (!isPasswordValid) {
         return res.status(401).json({ error: "Contraseña incorrecta" });
     }
@@ -411,7 +470,6 @@ app.get("/api/latest-tracks", async (req, res) => {
 });
 
 // Configurar el límite de solicitudes
-const limit = pLimit(10); // Máximo 10 solicitudes simultáneas (ajustado según tus necesidades)
 
 // Función para realizar solicitudes a la API
 const fetchArtistData = async (query) => {
@@ -441,17 +499,17 @@ app.get("/api/search", async (req, res) => {
                 fetch(
                     `https://api.deezer.com/search/artist?q=${encodeURIComponent(
                         query
-                    )}&limit=5`
+                    )}&limit=4`
                 ),
                 fetch(
                     `https://api.deezer.com/search/album?q=${encodeURIComponent(
                         query
-                    )}&limit=5`
+                    )}&limit=4`
                 ),
                 fetch(
                     `https://api.deezer.com/search/track?q=${encodeURIComponent(
                         query
-                    )}&limit=5`
+                    )}&limit=4`
                 )
             ]);
 
@@ -511,6 +569,8 @@ app.get("/api/search", async (req, res) => {
     }
 });
 
+const limit = pLimit(10); // Máximo 10 solicitudes simultáneas
+
 // Ruta para buscar artistas
 app.get("/api/search-artists", async (req, res) => {
     const { query } = req.query;
@@ -536,12 +596,12 @@ app.get("/api/search-artists", async (req, res) => {
 
 const DEEZER_API_URL = "https://api.deezer.com";
 
-// Endpoint para obtener las 10 canciones principales de un artista
+// Endpoint para obtener las 5 canciones principales de un artista
 app.get("/api/artist-top-tracks/:artistId", async (req, res) => {
     const { artistId } = req.params;
     try {
         const response = await fetch(
-            `${DEEZER_API_URL}/artist/${artistId}/top?limit=10`
+            `${DEEZER_API_URL}/artist/${artistId}/top?limit=5`
         );
         const data = await response.json();
         console.log(data);
@@ -550,6 +610,132 @@ app.get("/api/artist-top-tracks/:artistId", async (req, res) => {
         res.status(500).json({
             error: "Error al obtener las canciones principales"
         });
+    }
+});
+
+// Endpoint para obtener detalles de canciones favoritas
+app.post("/api/userFavorites", async (req, res) => {
+    const { ids } = req.body; // Obtener los IDs desde el cuerpo de la solicitud
+
+    if (!ids || !Array.isArray(ids) || ids.length === 0) {
+        return res
+            .status(400)
+            .json({ error: "No se proporcionaron IDs de canciones" });
+    }
+
+    try {
+        // Llama a la API de Deezer para cada ID de canción
+        const songDetailsPromises = ids.map((id) =>
+            fetch(`https://api.deezer.com/track/${id}`)
+                .then((response) => {
+                    if (!response.ok) {
+                        throw new Error(
+                            `Error al obtener el track con ID ${id}`
+                        );
+                    }
+                    return response.json(); // Convertir a JSON
+                })
+                .catch((error) => {
+                    console.error(`Error con el ID ${id}:`, error.message);
+                    return null; // Manejar errores de forma que no rompan el flujo
+                })
+        );
+
+        // Espera a que todas las promesas se resuelvan
+        const songs = await Promise.all(songDetailsPromises);
+
+        // Filtra resultados nulos (errores en algunas solicitudes)
+        const validSongs = songs.filter((song) => song !== null);
+
+        res.json({ favorites: validSongs });
+    } catch (error) {
+        console.error("Error fetching song details:", error.message);
+        res.status(500).json({
+            error: "Error al obtener detalles de las canciones"
+        });
+    }
+});
+
+// Endpoint para obtener detalles por ID
+app.get("/api/identify/:id", async (req, res) => {
+    const { id } = req.params;
+
+    try {
+        // Intenta validar el ID como track
+        let response = await fetch(`https://api.deezer.com/track/${id}`);
+        let data = await response.json();
+
+        if (!data.error) {
+            return res.json({ type: "track", data });
+        }
+
+        // Intenta validar el ID como artist
+        response = await fetch(`https://api.deezer.com/artist/${id}`);
+        data = await response.json();
+
+        if (!data.error) {
+            return res.json({ type: "artist", data });
+        }
+
+        // Intenta validar el ID como album
+        response = await fetch(`https://api.deezer.com/album/${id}`);
+        data = await response.json();
+
+        if (!data.error) {
+            return res.json({ type: "album", data });
+        }
+
+        // Si no coincide con ninguno
+        return res.status(404).json({ error: "ID no válido o desconocido" });
+    } catch (error) {
+        console.error("Error al identificar el ID:", error);
+        return res.status(500).json({ error: "Error interno del servidor" });
+    }
+});
+
+// Endpoint para obtener álbumes de un artista
+app.get("/api/artist/:id/albums", async (req, res) => {
+    const { id } = req.params;
+
+    try {
+        const response = await fetch(
+            `https://api.deezer.com/artist/${id}/albums`
+        );
+        const data = await response.json();
+
+        if (!data.error) {
+            return res.json(data.data); // Devuelve solo la lista de álbumes
+        }
+
+        return res
+            .status(404)
+            .json({ error: "No se encontraron álbumes para el artista." });
+    } catch (error) {
+        console.error("Error al obtener álbumes del artista:", error);
+        return res.status(500).json({ error: "Error interno del servidor" });
+    }
+});
+
+// Endpoint para obtener canciones de un álbum
+app.get("/api/album/:id/tracks", async (req, res) => {
+    const { id } = req.params;
+
+    try {
+        const response = await fetch(
+            `https://api.deezer.com/album/${id}/tracks`
+        );
+        const data = await response.json();
+
+        if (!data.error) {
+            return res.json(data.data); // Devuelve solo la lista de canciones
+        }
+
+        return res
+            .status(404)
+            .json({ error: "No se encontraron canciones para el álbum." });
+    } catch (error) {
+        console.error("Error al obtener canciones del álbum:", error);
+        return res.status(500).json({ error: "Error interno del servidor" });
     }
 });
 
